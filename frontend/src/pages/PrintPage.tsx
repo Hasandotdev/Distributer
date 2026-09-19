@@ -98,7 +98,7 @@ export default function PrintPage() {
           customer_id: c.id,
           shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
           shop_name: c.name,
-          bill_no: bills.map((b) => b.bill_number).join(', '),
+          bill_no: '',
           total_credit: totalCredit + opening,
           total_recovery: recovery,
           total_balance: customerBalance,
