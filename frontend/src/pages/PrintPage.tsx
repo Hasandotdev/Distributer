@@ -68,45 +68,33 @@ export default function PrintPage() {
       supabase.from('customers').select('id, name, shop_code, opening_balance').in('id', customerIds).order('name'),
     ]);
 
+    const creditMap: Record<string, number> = {};
+    const billMap: Record<string, string[]> = {};
+    (billRes.data || []).forEach((b) => {
+      creditMap[b.customer_id] = (creditMap[b.customer_id] || 0) + (b.credit_amount || 0);
+      if (!billMap[b.customer_id]) billMap[b.customer_id] = [];
+      if (b.bill_number) billMap[b.customer_id].push(b.bill_number);
+    });
+
     const recoveryMap: Record<string, number> = {};
     (recoveryRes.data || []).forEach((r) => {
       recoveryMap[r.customer_id] = (recoveryMap[r.customer_id] || 0) + r.amount;
     });
 
-    const customerMap: Record<string, { name: string; shop_code: string; opening_balance: number }> = {};
-    (custRes.data || []).forEach((c) => {
-      customerMap[c.id] = { name: c.name, shop_code: c.shop_code || c.id.slice(-8).toUpperCase(), opening_balance: c.opening_balance || 0 };
-    });
-
-    const result: PrintRow[] = [];
-    const seenCustomers: Record<string, boolean> = {};
-    (billRes.data || []).forEach((b) => {
-      const c = customerMap[b.customer_id];
-      if (!c) return;
-      const isFirst = !seenCustomers[b.customer_id];
-      seenCustomers[b.customer_id] = true;
-      result.push({
-        customer_id: b.customer_id,
-        shop_code: c.shop_code,
+    const result: PrintRow[] = (custRes.data || []).map((c) => {
+      const credit = creditMap[c.id] || 0;
+      const recovery = recoveryMap[c.id] || 0;
+      const opening = c.opening_balance || 0;
+      return {
+        customer_id: c.id,
+        shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
         shop_name: c.name,
-        bill_no: b.bill_number || '',
-        total_credit: b.credit_amount || 0,
-        total_recovery: isFirst ? (recoveryMap[b.customer_id] || 0) : 0,
-        total_balance: 0,
-      });
-    });
-
-    const customerTotals: Record<string, { credit: number; recovery: number; opening: number }> = {};
-    (billRes.data || []).forEach((b) => {
-      const c = customerMap[b.customer_id];
-      if (!c) return;
-      if (!customerTotals[b.customer_id]) customerTotals[b.customer_id] = { credit: 0, recovery: recoveryMap[b.customer_id] || 0, opening: c.opening_balance || 0 };
-      customerTotals[b.customer_id].credit += b.credit_amount || 0;
-    });
-    result.forEach((r) => {
-      const t = customerTotals[r.customer_id];
-      if (t) r.total_balance = t.credit + t.opening - t.recovery;
-    });
+        bill_no: (billMap[c.id] || []).join(', '),
+        total_credit: credit + opening,
+        total_recovery: recovery,
+        total_balance: credit + opening - recovery,
+      };
+    }).filter((r) => r.total_balance > 0);
 
     result.sort((a, b) => a.shop_name.localeCompare(b.shop_name));
     const filtered = result.filter((r) => r.total_balance > 0);
@@ -144,12 +132,8 @@ export default function PrintPage() {
       formatCurrency(r.total_balance),
     ]);
     const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
-    const uniqueBalances = new Map<string, number>();
-    rows.forEach((r) => { if (!uniqueBalances.has(r.customer_id)) uniqueBalances.set(r.customer_id, r.total_balance); });
-    const totalBalance = [...uniqueBalances.values()].reduce((s, v) => s + v, 0);
-    const uniqueRecovery = new Map<string, number>();
-    rows.forEach((r) => { if (r.total_recovery > 0 && !uniqueRecovery.has(r.customer_id)) uniqueRecovery.set(r.customer_id, r.total_recovery); });
-    const totalRecovery = [...uniqueRecovery.values()].reduce((s, v) => s + v, 0);
+    const totalRecovery = rows.reduce((s, r) => s + r.total_recovery, 0);
+    const totalBalance = rows.reduce((s, r) => s + r.total_balance, 0);
     tableRows.push(['', '', 'TOTAL', formatCurrency(totalCredit), formatCurrency(totalRecovery), formatCurrency(totalBalance)]);
 
     autoTable(doc, {
@@ -177,12 +161,8 @@ export default function PrintPage() {
     const wb = XLSX.utils.book_new();
     const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
     const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
-    const uniqueBalances = new Map<string, number>();
-    rows.forEach((r) => { if (!uniqueBalances.has(r.customer_id)) uniqueBalances.set(r.customer_id, r.total_balance); });
-    const totalBalance = [...uniqueBalances.values()].reduce((s, v) => s + v, 0);
-    const uniqueRecovery = new Map<string, number>();
-    rows.forEach((r) => { if (r.total_recovery > 0 && !uniqueRecovery.has(r.customer_id)) uniqueRecovery.set(r.customer_id, r.total_recovery); });
-    const totalRecovery = [...uniqueRecovery.values()].reduce((s, v) => s + v, 0);
+    const totalRecovery = rows.reduce((s, r) => s + r.total_recovery, 0);
+    const totalBalance = rows.reduce((s, r) => s + r.total_balance, 0);
 
     const wsData = [
       [companyName],
@@ -317,7 +297,7 @@ export default function PrintPage() {
                     <td className="px-4 py-3 text-slate-800 dark:text-slate-200 font-medium border border-slate-200 dark:border-slate-700">{r.shop_name}</td>
                     <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-400 text-xs border border-slate-200 dark:border-slate-700">{r.bill_no}</td>
                     <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_credit)}</td>
-                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{r.total_recovery > 0 ? formatCurrency(r.total_recovery) : ''}</td>
+                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_recovery)}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_balance)}</td>
                   </tr>
                 ))}
@@ -326,8 +306,8 @@ export default function PrintPage() {
                 <tr className="bg-slate-800 dark:bg-slate-950 text-white font-bold">
                   <td colSpan={3} className="px-4 py-3 text-center text-xs uppercase tracking-wider border border-slate-600">Total</td>
                   <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_credit, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.filter((r) => r.total_recovery > 0).map((r) => [r.customer_id, r.total_recovery])).values()).reduce((s, v) => s + v, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.map((r) => [r.customer_id, r.total_balance])).values()).reduce((s, v) => s + v, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_recovery, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_balance, 0))}</td>
                 </tr>
               </tfoot>
             </table>
