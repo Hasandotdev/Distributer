@@ -1,7 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { Printer, Loader2, ChevronDown } from 'lucide-react';
+import { Printer, Loader2, ChevronDown, FileDown } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 interface PrintRow {
   customer_id: string;
@@ -11,7 +14,6 @@ interface PrintRow {
   total_credit: number;
   total_recovery: number;
   total_balance: number;
-  today_recovery: number;
 }
 
 export default function PrintPage() {
@@ -29,12 +31,8 @@ export default function PrintPage() {
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [employeeName, setEmployeeName] = useState('');
   const [routeName, setRouteName] = useState('');
-  const [todayRecoveries, setTodayRecoveries] = useState<Record<string, number>>({});
-  const printRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetchDropdowns();
-  }, []);
+  useEffect(() => { fetchDropdowns(); }, []);
 
   async function fetchDropdowns() {
     const [routeRes, empRes] = await Promise.all([
@@ -46,216 +44,145 @@ export default function PrintPage() {
   }
 
   async function generateReport() {
-    if (!selectedRoute && !selectedEmployee) {
-      alert('Please select a route or employee');
-      return;
-    }
+    if (!selectedRoute && !selectedEmployee) { alert('Please select a route or employee'); return; }
     setLoading(true);
-    setTodayRecoveries({});
-
     let customerIds: string[] = [];
 
     if (selectedRoute) {
-      const { data: custData } = await supabase
-        .from('customers')
-        .select('id')
-        .eq('route_id', selectedRoute)
-        .eq('is_active', true);
-      customerIds = (custData || []).map((c) => c.id);
+      const { data } = await supabase.from('customers').select('id').eq('route_id', selectedRoute).eq('is_active', true);
+      customerIds = (data || []).map((c) => c.id);
     }
-
     if (selectedEmployee) {
-      const { data: empRoutes } = await supabase
-        .from('employee_routes')
-        .select('route_id')
-        .eq('employee_id', selectedEmployee);
+      const { data: empRoutes } = await supabase.from('employee_routes').select('route_id').eq('employee_id', selectedEmployee);
       const routeIds = (empRoutes || []).map((er) => er.route_id);
-
       if (routeIds.length > 0) {
-        const { data: custData } = await supabase
-          .from('customers')
-          .select('id')
-          .in('route_id', routeIds)
-          .eq('is_active', true);
-        customerIds = (custData || []).map((c) => c.id);
+        const { data } = await supabase.from('customers').select('id').in('route_id', routeIds).eq('is_active', true);
+        customerIds = (data || []).map((c) => c.id);
       }
     }
+    if (customerIds.length === 0) { setRows([]); setLoading(false); return; }
 
-    if (customerIds.length === 0) {
-      setRows([]);
-      setLoading(false);
-      return;
-    }
+    const [billRes, recoveryRes, custRes] = await Promise.all([
+      supabase.from('bills').select('customer_id, bill_number, credit_amount').in('customer_id', customerIds).eq('is_voided', false),
+      supabase.from('recoveries').select('customer_id, amount').in('customer_id', customerIds),
+      supabase.from('customers').select('id, name, shop_code, opening_balance').in('id', customerIds).order('name'),
+    ]);
 
-    const { data: billData } = await supabase
-      .from('bills')
-      .select('customer_id, bill_number, credit_amount')
-      .in('customer_id', customerIds)
-      .eq('is_voided', false);
-
-    const { data: recoveryData } = await supabase
-      .from('recoveries')
-      .select('customer_id, amount')
-      .in('customer_id', customerIds);
-
-    const { data: custInfo } = await supabase
-      .from('customers')
-      .select('id, name, shop_code, opening_balance')
-      .in('id', customerIds)
-      .order('name');
-
-    const creditPerCustomer: Record<string, number> = {};
-    const billCountPerCustomer: Record<string, number> = {};
-    (billData || []).forEach((b) => {
-      creditPerCustomer[b.customer_id] = (creditPerCustomer[b.customer_id] || 0) + (b.credit_amount || 0);
-      billCountPerCustomer[b.customer_id] = (billCountPerCustomer[b.customer_id] || 0) + 1;
+    const creditMap: Record<string, number> = {};
+    const billMap: Record<string, string[]> = {};
+    (billRes.data || []).forEach((b) => {
+      creditMap[b.customer_id] = (creditMap[b.customer_id] || 0) + (b.credit_amount || 0);
+      if (!billMap[b.customer_id]) billMap[b.customer_id] = [];
+      if (b.bill_number) billMap[b.customer_id].push(b.bill_number);
     });
 
-    const recoveryPerCustomer: Record<string, number> = {};
-    (recoveryData || []).forEach((r) => {
-      recoveryPerCustomer[r.customer_id] = (recoveryPerCustomer[r.customer_id] || 0) + r.amount;
+    const recoveryMap: Record<string, number> = {};
+    (recoveryRes.data || []).forEach((r) => {
+      recoveryMap[r.customer_id] = (recoveryMap[r.customer_id] || 0) + r.amount;
     });
 
-    const result: PrintRow[] = (custInfo || []).map((c) => {
-      const totalCredit = creditPerCustomer[c.id] || 0;
-      const totalRecovery = recoveryPerCustomer[c.id] || 0;
-      const openingBalance = c.opening_balance || 0;
+    const result: PrintRow[] = (custRes.data || []).map((c) => {
+      const credit = creditMap[c.id] || 0;
+      const recovery = recoveryMap[c.id] || 0;
+      const opening = c.opening_balance || 0;
       return {
         customer_id: c.id,
         shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
         shop_name: c.name,
-        bill_no: billCountPerCustomer[c.id] ? `${billCountPerCustomer[c.id]} bills` : '',
-        total_credit: totalCredit + openingBalance,
-        total_recovery: totalRecovery,
-        total_balance: totalCredit + openingBalance - totalRecovery,
-        today_recovery: 0,
+        bill_no: (billMap[c.id] || []).join(', '),
+        total_credit: credit + opening,
+        total_recovery: recovery,
+        total_balance: credit + opening - recovery,
       };
     }).filter((r) => r.total_balance > 0);
 
-    if (selectedEmployee) {
-      const emp = employees.find((e) => e.id === selectedEmployee);
-      setEmployeeName(emp ? (emp.employee_code || emp.name) : '');
-    } else {
-      setEmployeeName('');
-    }
-
-    if (selectedRoute) {
-      const route = routes.find((r) => r.id === selectedRoute);
-      setRouteName(route?.name || '');
-    } else {
-      setRouteName('All Routes');
-    }
-
+    setEmployeeName(selectedEmployee ? (employees.find((e) => e.id === selectedEmployee)?.employee_code || '') : '');
+    setRouteName(selectedRoute ? (routes.find((r) => r.id === selectedRoute)?.name || '') : 'All Routes');
     setRows(result);
     setReportGenerated(true);
     setLoading(false);
   }
 
-  function handleTodayRecoveryChange(customerId: string, value: string) {
-    const num = parseFloat(value.replace(/[^\d.]/g, '')) || 0;
-    setTodayRecoveries((prev) => ({ ...prev, [customerId]: num }));
+  const headers = ['SHOP ID', 'SHOP NAME', 'BILL NO', 'TOTAL CREDIT', 'TOTAL RECOVERY', 'TOTAL BALANCE'];
+
+  function exportPDF() {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
+
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' });
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Daily Recovery Record', pageWidth / 2, 22, { align: 'center' });
+    doc.setFontSize(8);
+    const info = [routeName && `Route: ${routeName}`, employeeName && `Employee: ${employeeName}`, reportDate && `Date: ${formatDate(reportDate)}`].filter(Boolean).join(' | ');
+    doc.text(info, pageWidth / 2, 28, { align: 'center' });
+
+    const tableRows = rows.map((r) => [
+      r.shop_code,
+      r.shop_name,
+      r.bill_no,
+      formatCurrency(r.total_credit),
+      formatCurrency(r.total_recovery),
+      formatCurrency(r.total_balance),
+    ]);
+    const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
+    const totalRecovery = rows.reduce((s, r) => s + r.total_recovery, 0);
+    const totalBalance = rows.reduce((s, r) => s + r.total_balance, 0);
+    tableRows.push(['', '', 'TOTAL', formatCurrency(totalCredit), formatCurrency(totalRecovery), formatCurrency(totalBalance)]);
+
+    autoTable(doc, {
+      head: [headers],
+      body: tableRows,
+      startY: 33,
+      styles: { fontSize: 8, cellPadding: 3, lineWidth: 0.3, lineColor: [0, 0, 0] },
+      headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center', lineWidth: 0.5, lineColor: [30, 80, 200] },
+      bodyStyles: { textColor: [30, 30, 30], valign: 'middle', lineWidth: 0.3, lineColor: [0, 0, 0] },
+      alternateRowStyles: { fillColor: [240, 243, 248] },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 28 },
+        1: { halign: 'left', cellWidth: 55 },
+        2: { halign: 'center', cellWidth: 40 },
+        3: { halign: 'right', cellWidth: 35 },
+        4: { halign: 'right', cellWidth: 35 },
+        5: { halign: 'right', cellWidth: 35 },
+      },
+      margin: { left: 10, right: 10 },
+    });
+    doc.save('Route_Recovery_Report.pdf');
   }
 
-  function handlePrint() {
-    const printContent = printRef.current;
-    if (!printContent) return;
-
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
+  function exportExcel() {
+    const wb = XLSX.utils.book_new();
     const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
     const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
     const totalRecovery = rows.reduce((s, r) => s + r.total_recovery, 0);
     const totalBalance = rows.reduce((s, r) => s + r.total_balance, 0);
-    const totalTodayRecovery = rows.reduce((s, r) => s + (todayRecoveries[r.customer_id] || 0), 0);
 
-    const rowsHtml = rows.map((r, i) => {
-      const bgColor = i % 2 === 0 ? '#f8fafc' : '#ffffff';
-      const todayRec = todayRecoveries[r.customer_id] || 0;
-      return `
-        <tr style="background:${bgColor};">
-          <td style="padding:8px 12px;border:1px solid #cbd5e1;font-size:12px;text-align:center;">${r.shop_code}</td>
-          <td style="padding:8px 12px;border:1px solid #cbd5e1;font-size:12px;">${r.shop_name}</td>
-          <td style="padding:8px 12px;border:1px solid #cbd5e1;font-size:12px;text-align:center;">${r.bill_no}</td>
-          <td style="padding:8px 12px;border:1px solid #cbd5e1;font-size:12px;text-align:right;">${formatCurrency(r.total_credit)}</td>
-          <td style="padding:8px 12px;border:1px solid #cbd5e1;font-size:12px;text-align:right;">${formatCurrency(r.total_recovery)}</td>
-          <td style="padding:8px 12px;border:1px solid #cbd5e1;font-size:12px;text-align:right;">${formatCurrency(r.total_balance)}</td>
-          <td style="padding:8px 12px;border:1px solid #cbd5e1;font-size:12px;text-align:right;">${todayRec > 0 ? formatCurrency(todayRec) : ''}</td>
-        </tr>
-      `;
-    }).join('');
+    const wsData = [
+      [companyName],
+      ['Daily Recovery Record'],
+      [[routeName && `Route: ${routeName}`, employeeName && `Employee: ${employeeName}`, reportDate && `Date: ${formatDate(reportDate)}`].filter(Boolean).join(' | ')],
+      [],
+      headers,
+      ...rows.map((r) => [r.shop_code, r.shop_name, r.bill_no, r.total_credit, r.total_recovery, r.total_balance]),
+      ['', '', 'TOTAL', totalCredit, totalRecovery, totalBalance],
+    ];
 
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Route Recovery Report</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: Arial, sans-serif; padding: 20px; }
-          .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #2563eb; padding-bottom: 15px; }
-          .company-name { font-size: 18px; font-weight: bold; color: #1e293b; }
-          .report-title { font-size: 14px; color: #475569; margin-top: 5px; }
-          .report-info { font-size: 11px; color: #64748b; margin-top: 8px; }
-          .info-row { display: flex; justify-content: space-between; margin-top: 5px; font-size: 11px; color: #475569; }
-          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          th { background: #2563eb; color: white; padding: 10px 12px; font-size: 12px; font-weight: bold; text-align: center; border: 1px solid #1d4ed8; }
-          td { border: 1px solid #cbd5e1; }
-          .total-row { background: #1e293b !important; color: white; font-weight: bold; }
-          .total-row td { border-color: #334155; color: white; font-weight: bold; }
-          .footer { margin-top: 20px; font-size: 10px; color: #94a3b8; text-align: center; }
-          .signature-area { margin-top: 40px; display: flex; justify-content: space-between; }
-          .signature-box { width: 200px; border-top: 1px solid #94a3b8; padding-top: 5px; font-size: 11px; color: #64748b; }
-          @media print { body { padding: 10px; } }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div class="company-name">${companyName}</div>
-          <div class="report-title">Daily Recovery Record</div>
-          <div class="report-info">
-            ${routeName ? `Route: ${routeName}` : ''}
-            ${employeeName ? ` | Employee: ${employeeName}` : ''}
-            ${reportDate ? ` | Date: ${formatDate(reportDate)}` : ''}
-          </div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th style="width:80px;">SHOP ID</th>
-              <th>SHOP NAME</th>
-              <th style="width:100px;">BILL NO</th>
-              <th style="width:110px;">TOTAL CREDIT</th>
-              <th style="width:110px;">TOTAL RECOVERY</th>
-              <th style="width:110px;">TOTAL BALANCE</th>
-              <th style="width:110px;">TODAY RECOVERY</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHtml}
-            <tr class="total-row">
-              <td colspan="3" style="padding:8px 12px;text-align:center;font-weight:bold;">TOTAL</td>
-              <td style="padding:8px 12px;text-align:right;">${formatCurrency(totalCredit)}</td>
-              <td style="padding:8px 12px;text-align:right;">${formatCurrency(totalRecovery)}</td>
-              <td style="padding:8px 12px;text-align:right;">${formatCurrency(totalBalance)}</td>
-              <td style="padding:8px 12px;text-align:right;">${totalTodayRecovery > 0 ? formatCurrency(totalTodayRecovery) : ''}</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="signature-area">
-          <div class="signature-box">Employee Signature</div>
-          <div class="signature-box">Supervisor Signature</div>
-        </div>
-        <div class="footer">Generated on ${new Date().toLocaleString()}</div>
-      </body>
-      </html>
-    `);
-
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-    }, 500);
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+      { s: { r: 2, c: 0 }, e: { r: 2, c: 5 } },
+    ];
+    ws['!cols'] = headers.map((h, i) => {
+      const maxLen = Math.max(h.length, ...rows.map((r) => String(Object.values(r)[i + 1] || '').length));
+      return { wch: Math.min(Math.max(maxLen + 2, 12), 35) };
+    });
+    XLSX.utils.book_append_sheet(wb, ws, 'Route Recovery Report');
+    XLSX.writeFile(wb, 'Route_Recovery_Report.xlsx');
   }
 
   return (
@@ -266,173 +193,82 @@ export default function PrintPage() {
         <div className="flex flex-wrap gap-4 items-end">
           <div className="relative">
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Route</label>
-            <input
-              type="text"
-              placeholder="Search route..."
-              value={routeSearch}
-              onChange={(e) => {
-                setRouteSearch(e.target.value);
-                setShowRouteDropdown(true);
-                if (selectedRoute) {
-                  setSelectedRoute('');
-                  setRouteName('');
-                }
-              }}
+            <input type="text" placeholder="Search route..." value={routeSearch}
+              onChange={(e) => { setRouteSearch(e.target.value); setShowRouteDropdown(true); if (selectedRoute) { setSelectedRoute(''); setRouteName(''); } }}
               onFocus={() => setShowRouteDropdown(true)}
               onBlur={() => setTimeout(() => setShowRouteDropdown(false), 200)}
-              className="px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg w-56"
-            />
-            {selectedRoute && (
-              <button
-                type="button"
-                onClick={() => { setSelectedRoute(''); setRouteSearch(''); setRouteName(''); }}
-                className="absolute right-2 top-9 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                ✕
-              </button>
-            )}
+              className="px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg w-56" />
+            {selectedRoute && <button type="button" onClick={() => { setSelectedRoute(''); setRouteSearch(''); setRouteName(''); }} className="absolute right-2 top-9 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>}
             {showRouteDropdown && !selectedRoute && (
               <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                {routes
-                  .filter((r) => {
-                    const q = routeSearch.toLowerCase();
-                    return !q || r.name.toLowerCase().includes(q);
-                  })
-                  .map((r) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onMouseDown={() => {
-                        setSelectedRoute(r.id);
-                        setRouteSearch(r.name);
-                        setShowRouteDropdown(false);
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm text-slate-800 dark:text-slate-200"
-                    >
-                      <span className="font-medium">{r.name}</span>
-                    </button>
-                  ))
-                  .slice(0, 20)}
-                {routes.filter((r) => {
-                  const q = routeSearch.toLowerCase();
-                  return !q || r.name.toLowerCase().includes(q);
-                }).length === 0 && (
-                  <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">No routes found</div>
-                )}
+                {routes.filter((r) => !routeSearch || r.name.toLowerCase().includes(routeSearch.toLowerCase())).slice(0, 20).map((r) => (
+                  <button key={r.id} type="button" onMouseDown={() => { setSelectedRoute(r.id); setRouteSearch(r.name); setShowRouteDropdown(false); }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm text-slate-800 dark:text-slate-200">
+                    <span className="font-medium">{r.name}</span>
+                  </button>
+                ))}
+                {routes.filter((r) => !routeSearch || r.name.toLowerCase().includes(routeSearch.toLowerCase())).length === 0 && <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">No routes found</div>}
               </div>
             )}
           </div>
 
           <div className="relative">
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Employee (Optional)</label>
-            <input
-              type="text"
-              placeholder="Search employee..."
-              value={employeeSearch}
-              onChange={(e) => {
-                setEmployeeSearch(e.target.value);
-                setShowEmployeeDropdown(true);
-                if (selectedEmployee) {
-                  setSelectedEmployee('');
-                  setEmployeeName('');
-                }
-              }}
+            <input type="text" placeholder="Search employee..." value={employeeSearch}
+              onChange={(e) => { setEmployeeSearch(e.target.value); setShowEmployeeDropdown(true); if (selectedEmployee) { setSelectedEmployee(''); setEmployeeName(''); } }}
               onFocus={() => setShowEmployeeDropdown(true)}
               onBlur={() => setTimeout(() => setShowEmployeeDropdown(false), 200)}
-              className="px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg w-56"
-            />
-            {selectedEmployee && (
-              <button
-                type="button"
-                onClick={() => { setSelectedEmployee(''); setEmployeeSearch(''); setEmployeeName(''); }}
-                className="absolute right-2 top-9 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-              >
-                ✕
-              </button>
-            )}
+              className="px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg w-56" />
+            {selectedEmployee && <button type="button" onClick={() => { setSelectedEmployee(''); setEmployeeSearch(''); setEmployeeName(''); }} className="absolute right-2 top-9 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">✕</button>}
             {showEmployeeDropdown && !selectedEmployee && (
               <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                {employees
-                  .filter((e) => {
-                    const q = employeeSearch.toLowerCase();
-                    return !q || e.name.toLowerCase().includes(q) || (e.employee_code || '').toLowerCase().includes(q);
-                  })
-                  .map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onMouseDown={() => {
-                        setSelectedEmployee(e.id);
-                        setEmployeeSearch(e.employee_code || e.name);
-                        setShowEmployeeDropdown(false);
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm text-slate-800 dark:text-slate-200"
-                    >
-                      <span className="font-medium">{e.employee_code || e.name}</span>
-                      {e.employee_code && <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">{e.name}</span>}
-                    </button>
-                  ))
-                  .slice(0, 20)}
-                {employees.filter((e) => {
-                  const q = employeeSearch.toLowerCase();
-                  return !q || e.name.toLowerCase().includes(q) || (e.employee_code || '').toLowerCase().includes(q);
-                }).length === 0 && (
-                  <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">No employees found</div>
-                )}
+                {employees.filter((e) => !employeeSearch || e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || (e.employee_code || '').toLowerCase().includes(employeeSearch.toLowerCase())).slice(0, 20).map((e) => (
+                  <button key={e.id} type="button" onMouseDown={() => { setSelectedEmployee(e.id); setEmployeeSearch(e.employee_code || e.name); setShowEmployeeDropdown(false); }}
+                    className="w-full text-left px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm text-slate-800 dark:text-slate-200">
+                    <span className="font-medium">{e.employee_code || e.name}</span>
+                    {e.employee_code && <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">{e.name}</span>}
+                  </button>
+                ))}
+                {employees.filter((e) => !employeeSearch || e.name.toLowerCase().includes(employeeSearch.toLowerCase()) || (e.employee_code || '').toLowerCase().includes(employeeSearch.toLowerCase())).length === 0 && <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">No employees found</div>}
               </div>
             )}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Report Date</label>
-            <input
-              type="date"
-              value={reportDate}
-              onChange={(e) => setReportDate(e.target.value)}
-              className="px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
-            />
+            <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)}
+              className="px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg" />
           </div>
 
-          <button
-            onClick={generateReport}
-            disabled={loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ChevronDown className="h-4 w-4" />
-            )}
+          <button onClick={generateReport} disabled={loading}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronDown className="h-4 w-4" />}
             Generate
           </button>
 
           {reportGenerated && rows.length > 0 && (
-            <button
-              onClick={handlePrint}
-              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2"
-            >
-              <Printer className="h-4 w-4" />
-              Print
-            </button>
+            <>
+              <button onClick={() => window.print()} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2">
+                <Printer className="h-4 w-4" /> Print
+              </button>
+              <button onClick={exportPDF} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2">
+                <FileDown className="h-4 w-4" /> PDF
+              </button>
+              <button onClick={exportExcel} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2">
+                <FileDown className="h-4 w-4" /> Excel
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {loading && (
-        <div className="flex items-center justify-center h-40">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-        </div>
-      )}
+      {loading && <div className="flex items-center justify-center h-40"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}
 
-      {!loading && reportGenerated && rows.length === 0 && (
-        <div className="text-center py-12 text-slate-500 dark:text-slate-400">
-          No data found for the selected filters
-        </div>
-      )}
+      {!loading && reportGenerated && rows.length === 0 && <div className="text-center py-12 text-slate-500 dark:text-slate-400">No data found for the selected filters</div>}
 
       {!loading && reportGenerated && rows.length > 0 && (
-        <div ref={printRef} className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-blue-600 text-white">
+        <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden print:border-0 print:shadow-none">
+          <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-blue-600 text-white print:bg-blue-600">
             <h2 className="text-center text-lg font-bold">{localStorage.getItem('companyName') || 'Distribution & Credit Management System'}</h2>
             <p className="text-center text-sm text-blue-100">Daily Recovery Record</p>
             <div className="flex justify-center gap-6 mt-2 text-xs text-blue-200">
@@ -443,51 +279,32 @@ export default function PrintPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-blue-600 text-white">
-                  <th className="px-4 py-3 text-center font-semibold text-xs uppercase tracking-wider">Shop ID</th>
-                  <th className="px-4 py-3 text-left font-semibold text-xs uppercase tracking-wider">Shop Name</th>
-                  <th className="px-4 py-3 text-center font-semibold text-xs uppercase tracking-wider">Bill No</th>
-                  <th className="px-4 py-3 text-right font-semibold text-xs uppercase tracking-wider">Total Credit</th>
-                  <th className="px-4 py-3 text-right font-semibold text-xs uppercase tracking-wider">Total Recovery</th>
-                  <th className="px-4 py-3 text-right font-semibold text-xs uppercase tracking-wider">Total Balance</th>
-                  <th className="px-4 py-3 text-right font-semibold text-xs uppercase tracking-wider">Today Recovery</th>
+                  {headers.map((h) => (
+                    <th key={h} className="px-4 py-3 text-center font-semibold text-xs uppercase tracking-wider border border-blue-700">{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r, i) => (
-                  <tr
-                    key={r.customer_id}
-                    className={`border-b border-slate-100 dark:border-slate-800 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/50 ${i % 2 === 0 ? 'bg-slate-50/50 dark:bg-slate-800/20' : ''}`}
-                  >
-                    <td className="px-4 py-3 text-center text-xs font-mono text-slate-600 dark:text-slate-400">{r.shop_code}</td>
-                    <td className="px-4 py-3 text-slate-800 dark:text-slate-200 font-medium">{r.shop_name}</td>
-                    <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-400 text-xs">{r.bill_no}</td>
-                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{formatCurrency(r.total_credit)}</td>
-                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{formatCurrency(r.total_recovery)}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-slate-800 dark:text-slate-200">{formatCurrency(r.total_balance)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <input
-                        type="text"
-                        placeholder="0"
-                        value={todayRecoveries[r.customer_id] ? formatCurrency(todayRecoveries[r.customer_id]) : ''}
-                        onChange={(e) => handleTodayRecoveryChange(r.customer_id, e.target.value)}
-                        className="w-28 text-right px-2 py-1 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </td>
+                  <tr key={r.customer_id} className={`border-b border-slate-200 dark:border-slate-700 last:border-b-2 last:border-slate-400 ${i % 2 === 0 ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-800/50'}`}>
+                    <td className="px-4 py-3 text-center text-xs font-mono text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">{r.shop_code}</td>
+                    <td className="px-4 py-3 text-slate-800 dark:text-slate-200 font-medium border border-slate-200 dark:border-slate-700">{r.shop_name}</td>
+                    <td className="px-4 py-3 text-center text-slate-600 dark:text-slate-400 text-xs border border-slate-200 dark:border-slate-700">{r.bill_no}</td>
+                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_credit)}</td>
+                    <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_recovery)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_balance)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="bg-slate-800 dark:bg-slate-950 text-white font-bold">
-                  <td colSpan={3} className="px-4 py-3 text-center text-xs uppercase tracking-wider">Total</td>
-                  <td className="px-4 py-3 text-right">{formatCurrency(rows.reduce((s, r) => s + r.total_credit, 0))}</td>
-                  <td className="px-4 py-3 text-right">{formatCurrency(rows.reduce((s, r) => s + r.total_recovery, 0))}</td>
-                  <td className="px-4 py-3 text-right">{formatCurrency(rows.reduce((s, r) => s + r.total_balance, 0))}</td>
-                  <td className="px-4 py-3 text-right">
-                    {formatCurrency(rows.reduce((s, r) => s + (todayRecoveries[r.customer_id] || 0), 0))}
-                  </td>
+                  <td colSpan={3} className="px-4 py-3 text-center text-xs uppercase tracking-wider border border-slate-600">Total</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_credit, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_recovery, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_balance, 0))}</td>
                 </tr>
               </tfoot>
             </table>

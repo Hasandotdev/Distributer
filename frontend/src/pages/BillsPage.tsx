@@ -43,6 +43,7 @@ interface Route {
 interface BillFormData {
   customer_id: string;
   bill_date: string;
+  bill_number: string;
   total_amount: string;
   paid_amount: string;
   notes: string;
@@ -72,6 +73,7 @@ export default function BillsPage() {
   const [formData, setFormData] = useState<BillFormData>({
     customer_id: '',
     bill_date: todayLocal(),
+    bill_number: '',
     total_amount: '',
     paid_amount: '',
     notes: '',
@@ -231,7 +233,7 @@ export default function BillsPage() {
       paid_amount: paidAmount,
       payment_status: paymentStatus,
       notes: formData.notes,
-      bill_number: editingBill ? editingBill.bill_number : generateBillNumber(),
+      bill_number: editingBill ? editingBill.bill_number : (formData.bill_number || generateBillNumber()),
     };
 
     let error;
@@ -260,6 +262,7 @@ export default function BillsPage() {
     setFormData({
       customer_id: '',
       bill_date: todayLocal(),
+      bill_number: '',
       total_amount: '',
       paid_amount: '',
       notes: '',
@@ -274,6 +277,7 @@ export default function BillsPage() {
     setFormData({
       customer_id: bill.customer_id,
       bill_date: bill.bill_date,
+      bill_number: bill.bill_number,
       total_amount: bill.total_amount.toString(),
       paid_amount: bill.paid_amount.toString(),
       notes: bill.notes || '',
@@ -677,9 +681,9 @@ export default function BillsPage() {
               </label>
               <input
                 type="text"
-                value={editingBill ? editingBill.bill_number : generateBillNumber()}
-                disabled
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
+                value={editingBill ? editingBill.bill_number : (formData.bill_number || generateBillNumber())}
+                onChange={(e) => setFormData({ ...formData, bill_number: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
               />
             </div>
           </div>
