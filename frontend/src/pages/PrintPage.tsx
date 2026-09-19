@@ -97,8 +97,8 @@ export default function PrintPage() {
         bills.forEach((b, i) => {
           result.push({
             customer_id: c.id,
-            shop_code: i === 0 ? (c.shop_code || c.id.slice(-8).toUpperCase()) : '',
-            shop_name: i === 0 ? c.name : '',
+            shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
+            shop_name: c.name,
             bill_no: b.bill_number,
             total_credit: b.credit,
             total_recovery: i === 0 ? recovery : 0,
