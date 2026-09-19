@@ -94,15 +94,24 @@ export default function PrintPage() {
 
       const bills = billCreditMap[c.id] || [];
       if (bills.length > 1) {
-        bills.forEach((b, i) => {
+        result.push({
+          customer_id: c.id,
+          shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
+          shop_name: c.name,
+          bill_no: bills.map((b) => b.bill_number).join(', '),
+          total_credit: totalCredit + opening,
+          total_recovery: recovery,
+          total_balance: customerBalance,
+        });
+        bills.forEach((b) => {
           result.push({
             customer_id: c.id,
-            shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
-            shop_name: c.name,
+            shop_code: '',
+            shop_name: '',
             bill_no: b.bill_number,
             total_credit: b.credit,
-            total_recovery: i === 0 ? recovery : 0,
-            total_balance: i === 0 ? customerBalance : 0,
+            total_recovery: 0,
+            total_balance: 0,
           });
         });
       } else {
