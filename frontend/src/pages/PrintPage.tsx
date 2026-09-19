@@ -70,10 +70,13 @@ export default function PrintPage() {
 
     const creditMap: Record<string, number> = {};
     const billMap: Record<string, string[]> = {};
+    const billCreditMap: Record<string, { bill_number: string; credit: number }[]> = {};
     (billRes.data || []).forEach((b) => {
       creditMap[b.customer_id] = (creditMap[b.customer_id] || 0) + (b.credit_amount || 0);
       if (!billMap[b.customer_id]) billMap[b.customer_id] = [];
       if (b.bill_number) billMap[b.customer_id].push(b.bill_number);
+      if (!billCreditMap[b.customer_id]) billCreditMap[b.customer_id] = [];
+      if (b.bill_number) billCreditMap[b.customer_id].push({ bill_number: b.bill_number, credit: b.credit_amount || 0 });
     });
 
     const recoveryMap: Record<string, number> = {};
@@ -81,27 +84,45 @@ export default function PrintPage() {
       recoveryMap[r.customer_id] = (recoveryMap[r.customer_id] || 0) + r.amount;
     });
 
-    const result: PrintRow[] = (custRes.data || []).map((c) => {
-      const credit = creditMap[c.id] || 0;
+    const result: PrintRow[] = [];
+    (custRes.data || []).forEach((c) => {
+      const totalCredit = creditMap[c.id] || 0;
       const recovery = recoveryMap[c.id] || 0;
       const opening = c.opening_balance || 0;
-      return {
-        customer_id: c.id,
-        shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
-        shop_name: c.name,
-        bill_no: (billMap[c.id] || []).join(', '),
-        total_credit: credit + opening,
-        total_recovery: recovery,
-        total_balance: credit + opening - recovery,
-      };
-    }).filter((r) => r.total_balance > 0);
+      const customerBalance = totalCredit + opening - recovery;
+      if (customerBalance <= 0) return;
 
-    result.sort((a, b) => a.shop_name.localeCompare(b.shop_name));
-    const filtered = result.filter((r) => r.total_balance > 0);
+      const bills = billCreditMap[c.id] || [];
+      if (bills.length > 1) {
+        bills.forEach((b, i) => {
+          result.push({
+            customer_id: c.id,
+            shop_code: i === 0 ? (c.shop_code || c.id.slice(-8).toUpperCase()) : '',
+            shop_name: i === 0 ? c.name : '',
+            bill_no: b.bill_number,
+            total_credit: b.credit,
+            total_recovery: i === 0 ? recovery : 0,
+            total_balance: i === 0 ? customerBalance : 0,
+          });
+        });
+      } else {
+        result.push({
+          customer_id: c.id,
+          shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
+          shop_name: c.name,
+          bill_no: (billMap[c.id] || []).join(', '),
+          total_credit: totalCredit + opening,
+          total_recovery: recovery,
+          total_balance: customerBalance,
+        });
+      }
+    });
+
+    result.sort((a, b) => (a.shop_name || a.customer_id).localeCompare(b.shop_name || b.customer_id));
 
     setEmployeeName(selectedEmployee ? (employees.find((e) => e.id === selectedEmployee)?.employee_code || '') : '');
     setRouteName(selectedRoute ? (routes.find((r) => r.id === selectedRoute)?.name || '') : 'All Routes');
-    setRows(filtered);
+    setRows(result);
     setReportGenerated(true);
     setLoading(false);
   }
@@ -132,8 +153,14 @@ export default function PrintPage() {
       formatCurrency(r.total_balance),
     ]);
     const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
-    const totalRecovery = rows.reduce((s, r) => s + r.total_recovery, 0);
-    const totalBalance = rows.reduce((s, r) => s + r.total_balance, 0);
+    const uniqueBal = new Map<string, number>();
+    const uniqueRec = new Map<string, number>();
+    rows.forEach((r) => {
+      if (r.customer_id && !uniqueBal.has(r.customer_id) && r.total_balance > 0) uniqueBal.set(r.customer_id, r.total_balance);
+      if (r.customer_id && !uniqueRec.has(r.customer_id) && r.total_recovery > 0) uniqueRec.set(r.customer_id, r.total_recovery);
+    });
+    const totalBalance = [...uniqueBal.values()].reduce((s, v) => s + v, 0);
+    const totalRecovery = [...uniqueRec.values()].reduce((s, v) => s + v, 0);
     tableRows.push(['', '', 'TOTAL', formatCurrency(totalCredit), formatCurrency(totalRecovery), formatCurrency(totalBalance)]);
 
     autoTable(doc, {
@@ -161,8 +188,14 @@ export default function PrintPage() {
     const wb = XLSX.utils.book_new();
     const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
     const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
-    const totalRecovery = rows.reduce((s, r) => s + r.total_recovery, 0);
-    const totalBalance = rows.reduce((s, r) => s + r.total_balance, 0);
+    const uniqueBal = new Map<string, number>();
+    const uniqueRec = new Map<string, number>();
+    rows.forEach((r) => {
+      if (r.customer_id && !uniqueBal.has(r.customer_id) && r.total_balance > 0) uniqueBal.set(r.customer_id, r.total_balance);
+      if (r.customer_id && !uniqueRec.has(r.customer_id) && r.total_recovery > 0) uniqueRec.set(r.customer_id, r.total_recovery);
+    });
+    const totalBalance = [...uniqueBal.values()].reduce((s, v) => s + v, 0);
+    const totalRecovery = [...uniqueRec.values()].reduce((s, v) => s + v, 0);
 
     const wsData = [
       [companyName],
@@ -306,8 +339,8 @@ export default function PrintPage() {
                 <tr className="bg-slate-800 dark:bg-slate-950 text-white font-bold">
                   <td colSpan={3} className="px-4 py-3 text-center text-xs uppercase tracking-wider border border-slate-600">Total</td>
                   <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_credit, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_recovery, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_balance, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.filter((r) => r.total_recovery > 0).map((r) => [r.customer_id, r.total_recovery])).values()).reduce((s, v) => s + v, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.filter((r) => r.total_balance > 0).map((r) => [r.customer_id, r.total_balance])).values()).reduce((s, v) => s + v, 0))}</td>
                 </tr>
               </tfoot>
             </table>
