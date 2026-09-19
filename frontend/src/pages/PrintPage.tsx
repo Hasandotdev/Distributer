@@ -106,8 +106,8 @@ export default function PrintPage() {
         bills.forEach((b) => {
           result.push({
             customer_id: c.id,
-            shop_code: '',
-            shop_name: '',
+            shop_code: c.shop_code || c.id.slice(-8).toUpperCase(),
+            shop_name: c.name,
             bill_no: b.bill_number,
             total_credit: b.credit,
             total_recovery: 0,
@@ -162,7 +162,7 @@ export default function PrintPage() {
       formatCurrency(r.total_balance),
       '',
     ]);
-    const summaryRows = rows.filter((r) => r.shop_code);
+    const summaryRows = rows.filter((r) => r.total_balance > 0);
     const totalCredit = summaryRows.reduce((s, r) => s + r.total_credit, 0);
     const totalRecovery = summaryRows.reduce((s, r) => s + r.total_recovery, 0);
     const totalBalance = summaryRows.reduce((s, r) => s + r.total_balance, 0);
@@ -193,7 +193,7 @@ export default function PrintPage() {
   function exportExcel() {
     const wb = XLSX.utils.book_new();
     const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
-    const summaryRows = rows.filter((r) => r.shop_code);
+    const summaryRows = rows.filter((r) => r.total_balance > 0);
     const totalCredit = summaryRows.reduce((s, r) => s + r.total_credit, 0);
     const totalRecovery = summaryRows.reduce((s, r) => s + r.total_recovery, 0);
     const totalBalance = summaryRows.reduce((s, r) => s + r.total_balance, 0);
@@ -340,9 +340,9 @@ export default function PrintPage() {
               <tfoot>
                 <tr className="bg-slate-800 dark:bg-slate-950 text-white font-bold">
                   <td colSpan={3} className="px-4 py-3 text-center text-xs uppercase tracking-wider border border-slate-600">Total</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.shop_code).reduce((s, r) => s + r.total_credit, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.shop_code).reduce((s, r) => s + r.total_recovery, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.shop_code).reduce((s, r) => s + r.total_balance, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.total_balance > 0).reduce((s, r) => s + r.total_credit, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.total_balance > 0).reduce((s, r) => s + r.total_recovery, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.total_balance > 0).reduce((s, r) => s + r.total_balance, 0))}</td>
                   <td className="px-4 py-3 border border-slate-600"></td>
                 </tr>
               </tfoot>
