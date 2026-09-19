@@ -213,6 +213,19 @@ export default function BillsPage() {
     return 'BILL-00001';
   }
 
+  async function fetchNextBillNumber(): Promise<string> {
+    const { data } = await supabase
+      .from('bills')
+      .select('bill_number')
+      .order('bill_number', { ascending: false })
+      .limit(1);
+    if (data && data.length > 0) {
+      const lastNum = parseInt(data[0].bill_number.replace('BILL-', ''));
+      return `BILL-${String(lastNum + 1).padStart(5, '0')}`;
+    }
+    return 'BILL-00001';
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -513,9 +526,11 @@ export default function BillsPage() {
             </button>
           )}
           <button
-            onClick={() => {
+            onClick={async () => {
               resetForm();
               setEditingBill(null);
+              const nextBillNum = await fetchNextBillNumber();
+              setFormData((prev) => ({ ...prev, bill_number: nextBillNum }));
               setShowForm(true);
             }}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -681,7 +696,7 @@ export default function BillsPage() {
               </label>
               <input
                 type="text"
-                value={editingBill ? editingBill.bill_number : (formData.bill_number || generateBillNumber())}
+                value={editingBill ? editingBill.bill_number : formData.bill_number}
                 onChange={(e) => setFormData({ ...formData, bill_number: e.target.value })}
                 className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
               />
