@@ -127,7 +127,7 @@ export default function PrintPage() {
     setLoading(false);
   }
 
-  const headers = ['SHOP ID', 'SHOP NAME', 'BILL NO', 'TOTAL CREDIT', 'TOTAL RECOVERY', 'TOTAL BALANCE'];
+  const headers = ['SHOP ID', 'SHOP NAME', 'BILL NO', 'TOTAL CREDIT', 'TOTAL RECOVERY', 'TOTAL BALANCE', 'TODAY RECOVERY'];
 
   function exportPDF() {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -151,6 +151,7 @@ export default function PrintPage() {
       formatCurrency(r.total_credit),
       formatCurrency(r.total_recovery),
       formatCurrency(r.total_balance),
+      '',
     ]);
     const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
     const uniqueBal = new Map<string, number>();
@@ -161,7 +162,7 @@ export default function PrintPage() {
     });
     const totalBalance = [...uniqueBal.values()].reduce((s, v) => s + v, 0);
     const totalRecovery = [...uniqueRec.values()].reduce((s, v) => s + v, 0);
-    tableRows.push(['', '', 'TOTAL', formatCurrency(totalCredit), formatCurrency(totalRecovery), formatCurrency(totalBalance)]);
+    tableRows.push(['', '', 'TOTAL', formatCurrency(totalCredit), formatCurrency(totalRecovery), formatCurrency(totalBalance), '']);
 
     autoTable(doc, {
       head: [headers],
@@ -173,11 +174,12 @@ export default function PrintPage() {
       alternateRowStyles: { fillColor: [240, 243, 248] },
       columnStyles: {
         0: { halign: 'center', cellWidth: 28 },
-        1: { halign: 'left', cellWidth: 55 },
-        2: { halign: 'center', cellWidth: 40 },
-        3: { halign: 'right', cellWidth: 35 },
-        4: { halign: 'right', cellWidth: 35 },
-        5: { halign: 'right', cellWidth: 35 },
+        1: { halign: 'left', cellWidth: 50 },
+        2: { halign: 'center', cellWidth: 35 },
+        3: { halign: 'right', cellWidth: 30 },
+        4: { halign: 'right', cellWidth: 30 },
+        5: { halign: 'right', cellWidth: 30 },
+        6: { halign: 'right', cellWidth: 30 },
       },
       margin: { left: 10, right: 10 },
     });
@@ -203,8 +205,8 @@ export default function PrintPage() {
       [[routeName && `Route: ${routeName}`, employeeName && `Employee: ${employeeName}`, reportDate && `Date: ${formatDate(reportDate)}`].filter(Boolean).join(' | ')],
       [],
       headers,
-      ...rows.map((r) => [r.shop_code, r.shop_name, r.bill_no, r.total_credit, r.total_recovery, r.total_balance]),
-      ['', '', 'TOTAL', totalCredit, totalRecovery, totalBalance],
+      ...rows.map((r) => [r.shop_code, r.shop_name, r.bill_no, r.total_credit, r.total_recovery, r.total_balance, '']),
+      ['', '', 'TOTAL', totalCredit, totalRecovery, totalBalance, ''],
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
@@ -332,6 +334,7 @@ export default function PrintPage() {
                     <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_credit)}</td>
                     <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_recovery)}</td>
                     <td className="px-4 py-3 text-right font-semibold text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">{formatCurrency(r.total_balance)}</td>
+                    <td className="px-4 py-3 text-right border border-slate-200 dark:border-slate-700"></td>
                   </tr>
                 ))}
               </tbody>
@@ -341,6 +344,7 @@ export default function PrintPage() {
                   <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_credit, 0))}</td>
                   <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.filter((r) => r.total_recovery > 0).map((r) => [r.customer_id, r.total_recovery])).values()).reduce((s, v) => s + v, 0))}</td>
                   <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.filter((r) => r.total_balance > 0).map((r) => [r.customer_id, r.total_balance])).values()).reduce((s, v) => s + v, 0))}</td>
+                  <td className="px-4 py-3 border border-slate-600"></td>
                 </tr>
               </tfoot>
             </table>
