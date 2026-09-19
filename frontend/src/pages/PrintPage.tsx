@@ -162,15 +162,10 @@ export default function PrintPage() {
       formatCurrency(r.total_balance),
       '',
     ]);
-    const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
-    const uniqueBal = new Map<string, number>();
-    const uniqueRec = new Map<string, number>();
-    rows.forEach((r) => {
-      if (r.customer_id && !uniqueBal.has(r.customer_id) && r.total_balance > 0) uniqueBal.set(r.customer_id, r.total_balance);
-      if (r.customer_id && !uniqueRec.has(r.customer_id) && r.total_recovery > 0) uniqueRec.set(r.customer_id, r.total_recovery);
-    });
-    const totalBalance = [...uniqueBal.values()].reduce((s, v) => s + v, 0);
-    const totalRecovery = [...uniqueRec.values()].reduce((s, v) => s + v, 0);
+    const summaryRows = rows.filter((r) => r.shop_code);
+    const totalCredit = summaryRows.reduce((s, r) => s + r.total_credit, 0);
+    const totalRecovery = summaryRows.reduce((s, r) => s + r.total_recovery, 0);
+    const totalBalance = summaryRows.reduce((s, r) => s + r.total_balance, 0);
     tableRows.push(['', '', 'TOTAL', formatCurrency(totalCredit), formatCurrency(totalRecovery), formatCurrency(totalBalance), '']);
 
     autoTable(doc, {
@@ -198,15 +193,10 @@ export default function PrintPage() {
   function exportExcel() {
     const wb = XLSX.utils.book_new();
     const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
-    const totalCredit = rows.reduce((s, r) => s + r.total_credit, 0);
-    const uniqueBal = new Map<string, number>();
-    const uniqueRec = new Map<string, number>();
-    rows.forEach((r) => {
-      if (r.customer_id && !uniqueBal.has(r.customer_id) && r.total_balance > 0) uniqueBal.set(r.customer_id, r.total_balance);
-      if (r.customer_id && !uniqueRec.has(r.customer_id) && r.total_recovery > 0) uniqueRec.set(r.customer_id, r.total_recovery);
-    });
-    const totalBalance = [...uniqueBal.values()].reduce((s, v) => s + v, 0);
-    const totalRecovery = [...uniqueRec.values()].reduce((s, v) => s + v, 0);
+    const summaryRows = rows.filter((r) => r.shop_code);
+    const totalCredit = summaryRows.reduce((s, r) => s + r.total_credit, 0);
+    const totalRecovery = summaryRows.reduce((s, r) => s + r.total_recovery, 0);
+    const totalBalance = summaryRows.reduce((s, r) => s + r.total_balance, 0);
 
     const wsData = [
       [companyName],
@@ -350,9 +340,9 @@ export default function PrintPage() {
               <tfoot>
                 <tr className="bg-slate-800 dark:bg-slate-950 text-white font-bold">
                   <td colSpan={3} className="px-4 py-3 text-center text-xs uppercase tracking-wider border border-slate-600">Total</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.reduce((s, r) => s + r.total_credit, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.filter((r) => r.total_recovery > 0).map((r) => [r.customer_id, r.total_recovery])).values()).reduce((s, v) => s + v, 0))}</td>
-                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(Array.from(new Map(rows.filter((r) => r.total_balance > 0).map((r) => [r.customer_id, r.total_balance])).values()).reduce((s, v) => s + v, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.shop_code).reduce((s, r) => s + r.total_credit, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.shop_code).reduce((s, r) => s + r.total_recovery, 0))}</td>
+                  <td className="px-4 py-3 text-right border border-slate-600">{formatCurrency(rows.filter((r) => r.shop_code).reduce((s, r) => s + r.total_balance, 0))}</td>
                   <td className="px-4 py-3 border border-slate-600"></td>
                 </tr>
               </tfoot>
