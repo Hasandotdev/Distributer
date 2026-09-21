@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate, cn } from '@/lib/utils';
 import DateRangeFilter from '@/components/DateRangeFilter';
-import { FileDown, Loader2, FileText, X } from 'lucide-react';
+import { FileDown, Loader2, FileText, X, ChevronUp, ChevronDown } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -119,6 +119,18 @@ export default function ReportsPage() {
   const [showEmployeeDropdown, setShowEmployeeDropdown] = useState(false);
   const [routeSearch, setRouteSearch] = useState('');
   const [showRouteDropdown, setShowRouteDropdown] = useState(false);
+
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  function handleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
 
   const fetchDropdowns = async () => {
     const [custRes, routeRes, empRes] = await Promise.all([
@@ -855,7 +867,7 @@ export default function ReportsPage() {
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => { setActiveTab(tab.id); setTableSearch(''); setCustomerSearch(''); setCustomerId(''); setEmployeeSearch(''); setEmployeeId(''); setRouteSearch(''); setRouteId(''); }}
+            onClick={() => { setActiveTab(tab.id); setTableSearch(''); setCustomerSearch(''); setCustomerId(''); setEmployeeSearch(''); setEmployeeId(''); setRouteSearch(''); setRouteId(''); setSortKey(null); setSortDir('asc'); }}
             className={cn(
               'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
               activeTab === tab.id
@@ -1145,18 +1157,78 @@ export default function ReportsPage() {
             </div>
           )}
 
-          {(activeTab === 'route' || activeTab === 'employee' || activeTab === 'shop-detail') && (
+          {(activeTab === 'route' || activeTab === 'employee' || activeTab === 'shop-detail') && (() => {
+            const sortColumns: Record<Tab, { key: string; label: string }[]> = {
+              customer: [],
+              route: [
+                { key: 'shop_code', label: 'SHOP ID' },
+                { key: 'shop_name', label: 'SHOP NAME' },
+                { key: 'bill_no', label: 'BILL NO' },
+                { key: 'bill_date', label: 'BILL DATE' },
+                { key: 'credit', label: 'TOTAL CREDIT' },
+                { key: 'recovery', label: 'TOTAL RECOVERY' },
+                { key: 'balance', label: 'TOTAL BALANCE' },
+                { key: 'today_recovery', label: 'TODAY RECOVERY' },
+              ],
+              employee: [
+                { key: 'shop_code', label: 'SHOP ID' },
+                { key: 'shop_name', label: 'SHOP NAME' },
+                { key: 'employee_code', label: 'EMPLOYEE ID' },
+                { key: 'bill_no', label: 'BILL NO' },
+                { key: 'bill_date', label: 'BILL DATE' },
+                { key: 'credit', label: 'TOTAL CREDIT' },
+                { key: 'recovery', label: 'TOTAL RECOVERY' },
+                { key: 'balance', label: 'TOTAL BALANCE' },
+                { key: 'today_recovery', label: 'TODAY RECOVERY' },
+              ],
+              'shop-detail': [
+                { key: 'date', label: 'Date' },
+                { key: 'type', label: 'Type' },
+                { key: 'reference', label: 'Reference' },
+                { key: 'amount', label: 'Amount' },
+                { key: 'credit', label: 'Credit' },
+                { key: 'notes', label: 'Notes' },
+              ],
+            };
+
+            function sortData<T extends Record<string, any>>(data: T[]): T[] {
+              if (!sortKey) return data;
+              return [...data].sort((a, b) => {
+                const aVal = a[sortKey] ?? '';
+                const bVal = b[sortKey] ?? '';
+                if (typeof aVal === 'number' && typeof bVal === 'number') {
+                  return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+                }
+                const cmp = String(aVal).localeCompare(String(bVal), undefined, { numeric: true });
+                return sortDir === 'asc' ? cmp : -cmp;
+              });
+            }
+
+            const columns = sortColumns[activeTab];
+
+            return (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
-                    {reportData.headers.map((h) => (
-                      <th key={h} className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400">{h}</th>
+                    {columns.map((col) => (
+                      <th
+                        key={col.key}
+                        onClick={() => handleSort(col.key)}
+                        className="px-4 py-3 text-left font-medium text-slate-600 dark:text-slate-400 cursor-pointer hover:text-slate-800 dark:hover:text-slate-200 select-none"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {col.label}
+                          {sortKey === col.key && (
+                            sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                          )}
+                        </span>
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {activeTab === 'route' && routeReport
+                  {activeTab === 'route' && sortData(routeReport)
                     .filter((r) => r.balance !== 0)
                     .filter((r) => {
                       const q = tableSearch.toLowerCase();
@@ -1181,7 +1253,7 @@ export default function ReportsPage() {
                       <td className="px-4 py-3 text-slate-700 dark:text-slate-300"></td>
                     </tr>
                   ))}
-                  {activeTab === 'employee' && employeeReport
+                  {activeTab === 'employee' && sortData(employeeReport)
                     .filter((r) => r.balance !== 0)
                     .filter((r) => {
                       const q = tableSearch.toLowerCase();
@@ -1207,7 +1279,7 @@ export default function ReportsPage() {
                       <td className="px-4 py-3 text-slate-700 dark:text-slate-300"></td>
                     </tr>
                   ))}
-                  {activeTab === 'shop-detail' && shopDetailReport
+                  {activeTab === 'shop-detail' && sortData(shopDetailReport)
                     .filter((r) => {
                       const q = tableSearch.toLowerCase();
                       return !q || r.type.toLowerCase().includes(q) || r.reference.toLowerCase().includes(q) || r.notes.toLowerCase().includes(q) || r.route_name.toLowerCase().includes(q);
@@ -1232,7 +1304,8 @@ export default function ReportsPage() {
                 </tbody>
               </table>
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
