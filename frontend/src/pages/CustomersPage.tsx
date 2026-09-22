@@ -7,7 +7,9 @@ import BulkUpload from '@/components/BulkUpload';
 import Modal from '@/components/Modal';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import DetailModal from '@/components/DetailModal';
-import { Plus, Edit, Search, Upload, UserX, UserCheck } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { Plus, Edit, Search, Upload, UserX, UserCheck, FileDown } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -252,6 +254,41 @@ export default function CustomersPage() {
     return matchesSearch && matchesRoute;
   });
 
+  function generatePDF() {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(companyName, pageWidth / 2, 15, { align: 'center' });
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Customers Report', pageWidth / 2, 22, { align: 'center' });
+
+    const headers = [['Shop Code', 'Name', 'Route', 'Phone', 'Opening Balance', 'Current Balance', 'Status']];
+    const rows = filteredCustomers.map((c) => [
+      c.shop_code || '-',
+      c.name,
+      c.route_name,
+      c.phone || '-',
+      formatCurrency(c.opening_balance),
+      formatCurrency(c.current_balance),
+      c.is_active ? 'Active' : 'Inactive',
+    ]);
+
+    autoTable(doc, {
+      head: headers,
+      body: rows,
+      startY: 28,
+      styles: { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255], fontStyle: 'bold' },
+      margin: { left: 10, right: 10 },
+    });
+
+    doc.save('Customers_Report.pdf');
+  }
+
   const columns = [
     { key: 'shop_code', header: 'Shop Code' },
     {
@@ -331,6 +368,13 @@ export default function CustomersPage() {
         <div className="flex gap-2">
           {userRole === 'admin' && (
             <>
+              <button
+                onClick={generatePDF}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+              >
+                <FileDown className="h-4 w-4" />
+                Export PDF
+              </button>
               <button
                 onClick={() => setShowBulkUpload(true)}
                 className="flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
