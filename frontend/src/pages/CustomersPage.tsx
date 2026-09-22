@@ -9,7 +9,8 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import DetailModal from '@/components/DetailModal';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Plus, Edit, Search, Upload, UserX, UserCheck, FileDown } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { Plus, Edit, Search, Upload, UserX, UserCheck, FileDown, FileSpreadsheet } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -289,6 +290,30 @@ export default function CustomersPage() {
     doc.save('Customers_Report.pdf');
   }
 
+  function generateExcel() {
+    const companyName = localStorage.getItem('companyName') || 'Distribution & Credit Management System';
+    const headers = ['Shop Code', 'Name', 'Route', 'Phone', 'Opening Balance', 'Current Balance', 'Status'];
+    const rows = filteredCustomers.map((c) => [
+      c.shop_code || '',
+      c.name,
+      c.route_name,
+      c.phone || '',
+      c.opening_balance,
+      c.current_balance,
+      c.is_active ? 'Active' : 'Inactive',
+    ]);
+
+    const wb = XLSX.utils.book_new();
+    const wsData = [[companyName], ['Customers Report'], [], headers, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, 'Customers Report');
+    XLSX.writeFile(wb, 'Customers_Report.xlsx');
+  }
+
   const columns = [
     { key: 'shop_code', header: 'Shop Code' },
     {
@@ -374,6 +399,13 @@ export default function CustomersPage() {
               >
                 <FileDown className="h-4 w-4" />
                 Export PDF
+              </button>
+              <button
+                onClick={generateExcel}
+                className="flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                Export Excel
               </button>
               <button
                 onClick={() => setShowBulkUpload(true)}
