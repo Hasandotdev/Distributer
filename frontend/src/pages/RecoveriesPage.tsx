@@ -29,6 +29,8 @@ interface Customer {
   id: string;
   name: string;
   outstanding: number;
+  route_id: string | null;
+  route_name?: string;
 }
 
 interface RecoveryFormData {
@@ -53,6 +55,7 @@ export default function RecoveriesPage() {
   const [routeFilter, setRouteFilter] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [formRoute, setFormRoute] = useState('');
   const [routes, setRoutes] = useState<{ id: string; name: string }[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
@@ -203,7 +206,14 @@ export default function RecoveriesPage() {
     }
   }
 
-  const selectedCustomer = customers.find(
+  const routeNameById = Object.fromEntries(routes.map((r) => [r.id, r.name]));
+
+  const customersWithRoute = customers.map((c) => ({
+    ...c,
+    route_name: routeNameById[c.route_id || ''] || '',
+  }));
+
+  const selectedCustomer = customersWithRoute.find(
     (c) => c.id === formData.customer_id
   );
   const exceedsBalance =
@@ -249,6 +259,7 @@ export default function RecoveriesPage() {
     setCustomerSearch('');
     setShowCustomerDropdown(false);
     setCustomerBills([]);
+    setFormRoute('');
   }
 
   async function handleBulkUpload(data: any[]) {
@@ -549,11 +560,31 @@ export default function RecoveriesPage() {
         title="New Recovery"
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Route</label>
+            <select
+              value={formRoute}
+              onChange={(e) => {
+                setFormRoute(e.target.value);
+                setCustomerSearch('');
+                setFormData({ ...formData, customer_id: '', bill_no: '' });
+                setCustomerBills([]);
+              }}
+              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
+            >
+              <option value="">All Routes</option>
+              {routes.map((route) => (
+                <option key={route.id} value={route.id}>
+                  {route.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="relative">
             <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Customer</label>
             <input
               type="text"
-              placeholder="Search by name or ID..."
+              placeholder="Search by name, ID or route..."
               value={customerSearch}
               onChange={(e) => {
                 setCustomerSearch(e.target.value);
@@ -581,10 +612,16 @@ export default function RecoveriesPage() {
             )}
             {showCustomerDropdown && !formData.customer_id && (
               <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                {customers
+                {customersWithRoute
                   .filter((c) => {
+                    if (formRoute && c.route_id !== formRoute) return false;
                     const q = customerSearch.toLowerCase();
-                    return !q || c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q);
+                    return (
+                      !q ||
+                      c.name.toLowerCase().includes(q) ||
+                      c.id.toLowerCase().includes(q) ||
+                      (c.route_name || '').toLowerCase().includes(q)
+                    );
                   })
                   .map((c) => (
                     <button
@@ -606,13 +643,22 @@ export default function RecoveriesPage() {
                       className="w-full text-left px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm text-slate-800 dark:text-slate-200"
                     >
                       <span className="font-medium">{c.name}</span>
-                      <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">({c.id.slice(0, 8)}...) — {formatCurrency(c.outstanding)}</span>
+                      {c.route_name && (
+                        <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">({c.route_name})</span>
+                      )}
+                      <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">— {formatCurrency(c.outstanding)}</span>
                     </button>
                   ))
                   .slice(0, 20)}
-                {customers.filter((c) => {
+                {customersWithRoute.filter((c) => {
+                  if (formRoute && c.route_id !== formRoute) return false;
                   const q = customerSearch.toLowerCase();
-                  return !q || c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q);
+                  return (
+                    !q ||
+                    c.name.toLowerCase().includes(q) ||
+                    c.id.toLowerCase().includes(q) ||
+                    (c.route_name || '').toLowerCase().includes(q)
+                  );
                 }).length === 0 && (
                   <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">No customers found</div>
                 )}
@@ -626,6 +672,12 @@ export default function RecoveriesPage() {
                 <span className="font-medium">Outstanding Balance: </span>
                 {formatCurrency(selectedCustomer.outstanding)}
               </p>
+              {selectedCustomer.route_name && (
+                <p className="mt-1">
+                  <span className="font-medium">Route: </span>
+                  {selectedCustomer.route_name}
+                </p>
+              )}
             </div>
           )}
 
