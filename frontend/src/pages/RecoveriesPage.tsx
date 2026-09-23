@@ -8,7 +8,7 @@ import BulkUpload from '@/components/BulkUpload';
 import Modal from '@/components/Modal';
 import PasswordConfirmDialog from '@/components/PasswordConfirmDialog';
 import DetailModal from '@/components/DetailModal';
-import { Plus, AlertTriangle, Trash2, FileDown } from 'lucide-react';
+import { Plus, AlertTriangle, Trash2, FileDown, Search } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -52,6 +52,7 @@ export default function RecoveriesPage() {
   });
   const [routeFilter, setRouteFilter] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [routes, setRoutes] = useState<{ id: string; name: string }[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
@@ -325,10 +326,22 @@ export default function RecoveriesPage() {
     }
   }
 
+  const filteredRecoveries = recoveries.filter((r) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      !q ||
+      r.customer_name.toLowerCase().includes(q) ||
+      r.employee_name.toLowerCase().includes(q) ||
+      (r.bill_no || '').toLowerCase().includes(q) ||
+      (r.notes || '').toLowerCase().includes(q)
+    );
+  });
+
   function exportRecoveries(format: 'pdf' | 'excel') {
     const headers = ['Date', 'Customer', 'Employee', 'Bill No', 'Amount', 'Notes'];
-    const totalAmount = recoveries.reduce((s, r) => s + r.amount, 0);
-    const rows = recoveries.map((r) => [
+    const exportData = filteredRecoveries;
+    const totalAmount = exportData.reduce((s, r) => s + r.amount, 0);
+    const rows = exportData.map((r) => [
       formatDate(r.recovery_date),
       r.customer_name,
       r.employee_name,
@@ -453,6 +466,16 @@ export default function RecoveriesPage() {
       </div>
 
       <div className="flex flex-wrap gap-4 items-center">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search recoveries..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
+          />
+        </div>
         <DateRangeFilter
           from={dateRange.from}
           to={dateRange.to}
@@ -508,15 +531,15 @@ export default function RecoveriesPage() {
 
       <DataTable
         columns={columns}
-        data={recoveries}
+        data={filteredRecoveries}
         loading={loading}
         emptyMessage="No recoveries found"
       />
 
-      {recoveries.length > 0 && (
+      {filteredRecoveries.length > 0 && (
         <div className="flex items-center justify-end gap-6 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm">
-          <span className="text-slate-600 dark:text-slate-400">Total Recovery: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatCurrency(recoveries.reduce((s, r) => s + r.amount, 0))}</span></span>
-          <span className="text-slate-600 dark:text-slate-400">Count: <span className="font-semibold text-slate-900 dark:text-slate-100">{recoveries.length}</span></span>
+          <span className="text-slate-600 dark:text-slate-400">Total Recovery: <span className="font-semibold text-slate-900 dark:text-slate-100">{formatCurrency(filteredRecoveries.reduce((s, r) => s + r.amount, 0))}</span></span>
+          <span className="text-slate-600 dark:text-slate-400">Count: <span className="font-semibold text-slate-900 dark:text-slate-100">{filteredRecoveries.length}</span></span>
         </div>
       )}
 
