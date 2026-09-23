@@ -205,13 +205,16 @@ export default function ReportsPage() {
     const { data: routeData } = await supabase.from('routes').select('id, name').eq('id', routeId).single();
     const routeName = routeData?.name || 'N/A';
 
-    const { data: customerData } = await supabase
+    const { data: customerData, error: custErr } = await supabase
       .from('customers')
       .select('id, name, shop_code, opening_balance')
       .eq('route_id', routeId)
       .order('name');
 
+    console.log('[RouteReport] routeId:', routeId, 'customers:', customerData?.length, 'error:', custErr);
+
     if (!customerData || customerData.length === 0) {
+      console.warn('[RouteReport] No customers found for route');
       setRouteReport([]);
       setLoading(false);
       return;
@@ -242,6 +245,11 @@ export default function ReportsPage() {
     }
 
     const [billRes, recoveryRes] = await Promise.all([billQuery, recoveryQuery]);
+
+    console.log('[RouteReport] bills:', billRes.data?.length, 'error:', billRes.error);
+    console.log('[RouteReport] recoveries:', recoveryRes.data?.length, 'error:', recoveryRes.error);
+    console.log('[RouteReport] sample bill:', billRes.data?.[0]);
+    console.log('[RouteReport] dateRange:', dateRange);
 
     if (billRes.error) {
       console.error('Error fetching bills for route report:', billRes.error);
@@ -299,6 +307,8 @@ export default function ReportsPage() {
         today_recovery: 0,
       };
     }).filter(Boolean) as RouteReportRow[];
+
+    console.log('[RouteReport] final rows:', rows.length, 'sample:', rows[0]);
 
     setRouteReport(rows);
     setLoading(false);
