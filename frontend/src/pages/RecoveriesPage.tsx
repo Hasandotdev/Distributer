@@ -559,7 +559,7 @@ export default function RecoveriesPage() {
         onClose={() => setShowForm(false)}
         title="New Recovery"
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3">
           <div>
             <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Route</label>
             <select
@@ -667,16 +667,16 @@ export default function RecoveriesPage() {
           </div>
 
           {selectedCustomer && (
-            <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-sm text-slate-700 dark:text-slate-300">
-              <p>
-                <span className="font-medium">Outstanding Balance: </span>
+            <div className="px-3 py-2 bg-slate-50 dark:bg-slate-800 rounded-lg text-sm text-slate-700 dark:text-slate-300 flex flex-wrap gap-x-6 gap-y-1">
+              <span>
+                <span className="font-medium">Outstanding: </span>
                 {formatCurrency(selectedCustomer.outstanding)}
-              </p>
+              </span>
               {selectedCustomer.route_name && (
-                <p className="mt-1">
+                <span>
                   <span className="font-medium">Route: </span>
                   {selectedCustomer.route_name}
-                </p>
+                </span>
               )}
             </div>
           )}
@@ -701,7 +701,7 @@ export default function RecoveriesPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">Amount</label>
               <input
@@ -730,34 +730,33 @@ export default function RecoveriesPage() {
                 className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
               />
             </div>
+            {userRole === 'admin' && (
+              <div>
+                <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">
+                  Employee
+                </label>
+                <select
+                  value={formData.employee_id}
+                  onChange={(e) =>
+                    setFormData({ ...formData, employee_id: e.target.value })
+                  }
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
+                >
+                  <option value="">Select</option>
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.employee_code || emp.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {exceedsBalance && (
-            <div className="flex items-center gap-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
-              <AlertTriangle className="h-4 w-4" />
+            <div className="flex items-center gap-2 p-2 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
               Amount exceeds outstanding balance significantly
-            </div>
-          )}
-
-          {userRole === 'admin' && (
-            <div>
-              <label className="block text-sm font-medium mb-1 text-slate-700 dark:text-slate-300">
-                Collecting Employee
-              </label>
-              <select
-                value={formData.employee_id}
-                onChange={(e) =>
-                  setFormData({ ...formData, employee_id: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-lg"
-              >
-                <option value="">Select Employee</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.employee_code || emp.name}
-                  </option>
-                ))}
-              </select>
             </div>
           )}
 
@@ -775,7 +774,7 @@ export default function RecoveriesPage() {
             />
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="sticky bottom-0 -mx-6 -mb-4 mt-1 flex justify-end gap-2 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-6 py-3">
             <button
               type="button"
               onClick={() => setShowForm(false)}
