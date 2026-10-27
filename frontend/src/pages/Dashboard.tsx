@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, fetchAllRows } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { formatCurrency, formatDate, todayLocal } from '@/lib/utils';
+import { formatCurrency, formatDate, todayLocal, addDays } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 import {
   TrendingUp,
@@ -86,58 +86,65 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const today = todayLocal();
+      const tomorrow = addDays(today, 1);
 
-      let billQuery = supabase
-        .from('bills')
-        .select('total_amount, credit_amount, bill_date, customer_id')
-        .eq('is_voided', false);
+      const billsQuery = () => {
+        let q = supabase
+          .from('bills')
+          .select('total_amount, credit_amount, bill_date, customer_id')
+          .eq('is_voided', false);
+        if (userRole === 'employee' && userEmployee) {
+          q = q.eq('employee_id', userEmployee.id);
+        }
+        return q;
+      };
 
-      let recoveryQuery = supabase
-        .from('recoveries')
-        .select('amount, recovery_date, customer_id');
+      const recoveriesQuery = () => {
+        let q = supabase
+          .from('recoveries')
+          .select('amount, recovery_date, customer_id');
+        if (userRole === 'employee' && userEmployee) {
+          q = q.eq('employee_id', userEmployee.id);
+        }
+        return q;
+      };
 
-      if (userRole === 'employee' && userEmployee) {
-        billQuery = billQuery.eq('employee_id', userEmployee.id);
-        recoveryQuery = recoveryQuery.eq('employee_id', userEmployee.id);
-      }
+      const [bills, recoveries, todayBills, todayRecoveries, customersData] =
+        await Promise.all([
+          fetchAllRows(() => billsQuery()),
+          fetchAllRows(() => recoveriesQuery()),
+          fetchAllRows(() => billsQuery().gte('bill_date', today).lt('bill_date', tomorrow)),
+          fetchAllRows(() => recoveriesQuery().gte('recovery_date', today).lt('recovery_date', tomorrow)),
+          fetchAllRows(() =>
+            supabase
+              .from('customers')
+              .select('id, opening_balance, is_active')
+              .eq('is_active', true)
+          ),
+        ]);
 
-      const [billsResult, recoveriesResult] = await Promise.all([
-        billQuery,
-        recoveryQuery,
-      ]);
-
-      const { data: customersData } = await supabase
-        .from('customers')
-        .select('opening_balance, is_active')
-        .eq('is_active', true);
-
-      const bills = billsResult.data || [];
-      const recoveries = recoveriesResult.data || [];
-
-      const totalOpeningBalance = (customersData || []).reduce((sum, c) => sum + (c.opening_balance || 0), 0);
-      const totalCredit = bills.reduce((sum, b) => sum + (b.credit_amount || 0), 0);
-      const totalRecovery = recoveries.reduce((sum, r) => sum + (r.amount || 0), 0);
+      const totalOpeningBalance = (customersData || []).reduce((sum, c: any) => sum + (c.opening_balance || 0), 0);
+      const totalCredit = bills.reduce((sum, b: any) => sum + (b.credit_amount || 0), 0);
+      const totalRecovery = recoveries.reduce((sum, r: any) => sum + (r.amount || 0), 0);
       const totalOutstanding = totalOpeningBalance + totalCredit - totalRecovery;
 
-      const todayCredit = bills
-        .filter((b) => b.bill_date === today)
-        .reduce((sum, b) => sum + (b.credit_amount || 0), 0);
-
-      const todayRecovery = recoveries
-        .filter((r) => r.recovery_date === today)
-        .reduce((sum, r) => sum + (r.amount || 0), 0);
+      const todayCredit = todayBills.reduce((sum, b: any) => sum + (b.credit_amount || 0), 0);
+      const todayRecovery = todayRecoveries.reduce((sum, r: any) => sum + (r.amount || 0), 0);
 
       const todayCustomerIds = new Set<string>();
-      bills.filter((b) => b.bill_date === today).forEach((b) => { if (b.customer_id) todayCustomerIds.add(b.customer_id); });
-      recoveries.filter((r) => r.recovery_date === today).forEach((r) => { if (r.customer_id) todayCustomerIds.add(r.customer_id); });
+      todayBills.forEach((b: any) => { if (b.customer_id) todayCustomerIds.add(b.customer_id); });
+      todayRecoveries.forEach((r: any) => { if (r.customer_id) todayCustomerIds.add(r.customer_id); });
 
       const custBalanceMap: Record<string, number> = {};
       (customersData || []).forEach((c: any) => { custBalanceMap[c.id] = c.opening_balance || 0; });
 
+      const creditMap: Record<string, number> = {};
+      bills.forEach((b: any) => { creditMap[b.customer_id] = (creditMap[b.customer_id] || 0) + (b.credit_amount || 0); });
+      const recoveryMap: Record<string, number> = {};
+      recoveries.forEach((r: any) => { recoveryMap[r.customer_id] = (recoveryMap[r.customer_id] || 0) + (r.amount || 0); });
+
       const todayOutstanding = [...todayCustomerIds].reduce((sum, cid) => {
-        const custCredit = bills.filter((b) => b.customer_id === cid).reduce((s, b) => s + (b.credit_amount || 0), 0);
-        const custRecovery = recoveries.filter((r) => r.customer_id === cid).reduce((s, r) => s + (r.amount || 0), 0);
-        return sum + Math.max(0, (custBalanceMap[cid] || 0) + custCredit - custRecovery);
+        return sum + Math.max(0, (custBalanceMap[cid] || 0) + (creditMap[cid] || 0) - (recoveryMap[cid] || 0));
       }, 0);
 
       setStats({
@@ -159,10 +166,14 @@ export default function Dashboard() {
   async function loadTodayRecoveryDrill(view: 'employee' | 'customer') {
     setDrillLoading(true);
     const today = todayLocal();
-    const { data } = await supabase
-      .from('recoveries')
-      .select('amount, employee_id, customer_id')
-      .eq('recovery_date', today);
+    const tomorrow = addDays(today, 1);
+    const data = await fetchAllRows<any>(() =>
+      supabase
+        .from('recoveries')
+        .select('amount, employee_id, customer_id')
+        .gte('recovery_date', today)
+        .lt('recovery_date', tomorrow)
+    );
 
     if (view === 'employee') {
       setDrillTitle("Today's Recovery - Employee Wise");
@@ -181,7 +192,7 @@ export default function Dashboard() {
       );
     } else {
       setDrillTitle("Today's Recovery - Customer Wise");
-      const { data: custs } = await supabase.from('customers').select('id, name');
+      const custs = await fetchAllRows<any>(() => supabase.from('customers').select('id, name'));
       const custMap: Record<string, string> = {};
       (custs || []).forEach((c) => { custMap[c.id] = c.name; });
 
@@ -204,14 +215,12 @@ export default function Dashboard() {
     setDrillLoading(true);
     try {
       const routesRes = await supabase.from('routes').select('id, name');
-      const customersRes = await supabase.from('customers').select('id, name, route_id, opening_balance');
-      const billsRes = await supabase.from('bills').select('customer_id, credit_amount').eq('is_voided', false);
-      const recoveriesRes = await supabase.from('recoveries').select('customer_id, amount');
-
       const routes = routesRes.data || [];
-      const customers = customersRes.data || [];
-      const bills = billsRes.data || [];
-      const recoveries = recoveriesRes.data || [];
+      const [customers, bills, recoveries] = await Promise.all([
+        fetchAllRows<any>(() => supabase.from('customers').select('id, name, route_id, opening_balance')),
+        fetchAllRows<any>(() => supabase.from('bills').select('customer_id, credit_amount').eq('is_voided', false)),
+        fetchAllRows<any>(() => supabase.from('recoveries').select('customer_id, amount')),
+      ]);
 
       const creditMap: Record<string, number> = {};
       bills.forEach((b) => { creditMap[b.customer_id] = (creditMap[b.customer_id] || 0) + (b.credit_amount || 0); });
@@ -249,14 +258,10 @@ export default function Dashboard() {
       .eq('route_id', routeId)
       .eq('is_active', true);
 
-    const { data: bills } = await supabase
-      .from('bills')
-      .select('customer_id, credit_amount')
-      .eq('is_voided', false);
-
-    const { data: recoveries } = await supabase
-      .from('recoveries')
-      .select('customer_id, amount');
+    const [bills, recoveries] = await Promise.all([
+      fetchAllRows<any>(() => supabase.from('bills').select('customer_id, credit_amount').eq('is_voided', false)),
+      fetchAllRows<any>(() => supabase.from('recoveries').select('customer_id, amount')),
+    ]);
 
     const creditMap: Record<string, number> = {};
     (bills || []).forEach((b) => {
@@ -295,13 +300,17 @@ export default function Dashboard() {
       return;
     } else if (tileKey === 'today-credit') {
       setDrillTitle("Today's Credit - Customer Wise");
-      const { data } = await supabase
-        .from('bills')
-        .select('credit_amount, customer_id')
-        .eq('bill_date', today)
-        .eq('is_voided', false);
+      const tomorrow = addDays(today, 1);
+      const data = await fetchAllRows<any>(() =>
+        supabase
+          .from('bills')
+          .select('credit_amount, customer_id')
+          .gte('bill_date', today)
+          .lt('bill_date', tomorrow)
+          .eq('is_voided', false)
+      );
 
-      const { data: custs } = await supabase.from('customers').select('id, name');
+      const custs = await fetchAllRows<any>(() => supabase.from('customers').select('id, name'));
       const custMap: Record<string, string> = {};
       (custs || []).forEach((c) => { custMap[c.id] = c.name; });
 
@@ -319,12 +328,14 @@ export default function Dashboard() {
       );
     } else if (tileKey === 'total-credit') {
       setDrillTitle('Total Credit - Customer Wise');
-      const { data } = await supabase
-        .from('bills')
-        .select('credit_amount, customer_id')
-        .eq('is_voided', false);
+      const data = await fetchAllRows<any>(() =>
+        supabase
+          .from('bills')
+          .select('credit_amount, customer_id')
+          .eq('is_voided', false)
+      );
 
-      const { data: custs } = await supabase.from('customers').select('id, name');
+      const custs = await fetchAllRows<any>(() => supabase.from('customers').select('id, name'));
       const custMap: Record<string, string> = {};
       (custs || []).forEach((c) => { custMap[c.id] = c.name; });
 
@@ -342,9 +353,9 @@ export default function Dashboard() {
       );
     } else if (tileKey === 'total-recovery') {
       setDrillTitle('Total Recovery - Employee Wise');
-      const { data } = await supabase
-        .from('recoveries')
-        .select('amount, employee_id');
+      const data = await fetchAllRows<any>(() =>
+        supabase.from('recoveries').select('amount, employee_id')
+      );
 
       const { data: emps } = await supabase.from('employees').select('id, name, employee_code');
       const empMap: Record<string, string> = {};
@@ -361,13 +372,11 @@ export default function Dashboard() {
       );
     } else if (tileKey === 'outstanding') {
       setDrillTitle('Outstanding - Customer Wise');
-      const { data: bills } = await supabase
-        .from('bills')
-        .select('customer_id, credit_amount')
-        .eq('is_voided', false);
-      const { data: recoveries } = await supabase
-        .from('recoveries')
-        .select('customer_id, amount');
+      const [bills, recoveries, customers] = await Promise.all([
+        fetchAllRows<any>(() => supabase.from('bills').select('customer_id, credit_amount').eq('is_voided', false)),
+        fetchAllRows<any>(() => supabase.from('recoveries').select('customer_id, amount')),
+        fetchAllRows<any>(() => supabase.from('customers').select('id, name, opening_balance')),
+      ]);
 
       const creditMap: Record<string, number> = {};
       (bills || []).forEach((b) => {
@@ -378,7 +387,6 @@ export default function Dashboard() {
         recoveryMap[r.customer_id] = (recoveryMap[r.customer_id] || 0) + r.amount;
       });
 
-      const { data: customers } = await supabase.from('customers').select('id, name, opening_balance');
       const custMap: Record<string, { name: string; opening_balance: number }> = {};
       (customers || []).forEach((c) => { custMap[c.id] = { name: c.name, opening_balance: c.opening_balance || 0 }; });
 
@@ -394,16 +402,25 @@ export default function Dashboard() {
       );
     } else if (tileKey === 'today-outstanding') {
       setDrillTitle("Today's Outstanding - Customer Wise");
+      const tomorrow = addDays(today, 1);
 
-      const { data: todayBills } = await supabase
-        .from('bills')
-        .select('customer_id')
-        .eq('bill_date', today)
-        .eq('is_voided', false);
-      const { data: todayRecoveries } = await supabase
-        .from('recoveries')
-        .select('customer_id')
-        .eq('recovery_date', today);
+      const [todayBills, todayRecoveries] = await Promise.all([
+        fetchAllRows<any>(() =>
+          supabase
+            .from('bills')
+            .select('customer_id')
+            .gte('bill_date', today)
+            .lt('bill_date', tomorrow)
+            .eq('is_voided', false)
+        ),
+        fetchAllRows<any>(() =>
+          supabase
+            .from('recoveries')
+            .select('customer_id')
+            .gte('recovery_date', today)
+            .lt('recovery_date', tomorrow)
+        ),
+      ]);
 
       const activeIds = [...new Set([
         ...(todayBills || []).map((b: any) => b.customer_id),
@@ -413,15 +430,21 @@ export default function Dashboard() {
       if (activeIds.length === 0) {
         setDrillData([]);
       } else {
-        const { data: allBills } = await supabase
-          .from('bills')
-          .select('customer_id, credit_amount')
-          .eq('is_voided', false)
-          .in('customer_id', activeIds);
-        const { data: allRecoveries } = await supabase
-          .from('recoveries')
-          .select('customer_id, amount')
-          .in('customer_id', activeIds);
+        const [allBills, allRecoveries] = await Promise.all([
+          fetchAllRows<any>(() =>
+            supabase
+              .from('bills')
+              .select('customer_id, credit_amount')
+              .eq('is_voided', false)
+              .in('customer_id', activeIds)
+          ),
+          fetchAllRows<any>(() =>
+            supabase
+              .from('recoveries')
+              .select('customer_id, amount')
+              .in('customer_id', activeIds)
+          ),
+        ]);
 
         const creditMap: Record<string, number> = {};
         (allBills || []).forEach((b: any) => {
@@ -448,10 +471,12 @@ export default function Dashboard() {
       }
     } else if (tileKey === 'opening-balance') {
       setDrillTitle('Opening Balance - Customer Wise');
-      const { data: customers } = await supabase
-        .from('customers')
-        .select('id, name, opening_balance')
-        .eq('is_active', true);
+      const customers = await fetchAllRows<any>(() =>
+        supabase
+          .from('customers')
+          .select('id, name, opening_balance')
+          .eq('is_active', true)
+      );
 
       setDrillData(
         (customers || [])

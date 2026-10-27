@@ -8,3 +8,19 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+const PAGE_SIZE = 1000
+
+export async function fetchAllRows<T = any>(build: () => any): Promise<T[]> {
+  const rows: T[] = []
+  let from = 0
+  for (let page = 0; page < 100; page++) {
+    const { data, error } = await build().range(from, from + PAGE_SIZE - 1)
+    if (error) throw new Error(error.message)
+    const chunk = (data || []) as T[]
+    rows.push(...chunk)
+    if (chunk.length < PAGE_SIZE) break
+    from += chunk.length
+  }
+  return rows
+}

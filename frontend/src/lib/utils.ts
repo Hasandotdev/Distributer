@@ -66,6 +66,12 @@ export function todayLocal(): string {
   return toLocalDateStr(new Date());
 }
 
+export function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return todayLocal();
+  return toLocalDateStr(new Date(y, m - 1, d + days));
+}
+
 function toLocalDateStr(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
